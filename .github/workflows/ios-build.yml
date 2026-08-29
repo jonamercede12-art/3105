@@ -1,66 +1,18 @@
-name: Build iOS IPA
+- name: Mostrar schemes
+  shell: bash
+  run: |
+    set -e
+    echo "Contenido del workspace:"
+    find . -maxdepth 4 -type d -name "*.xcodeproj" -print
+    find . -maxdepth 4 -type d -name "*.xcworkspace" -print
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+    PROJECT=$(find . -type d -name "*.xcodeproj" -print -quit)
 
-jobs:
-  build:
-    runs-on: macos-latest
+    if [ -z "$PROJECT" ]; then
+      echo "ERROR: No se encontró ningún proyecto Xcode (.xcodeproj)"
+      exit 1
+    fi
 
-    steps:
-      - name: Descargar código
-        uses: actions/checkout@v4
+    echo "Proyecto encontrado: $PROJECT"
 
-      - name: Buscar proyecto
-        run: |
-          echo "=== Proyectos Xcode ==="
-          find . -name "*.xcodeproj" -o -name "*.xcworkspace"
-
-      - name: Mostrar schemes
-        run: |
-          cd source/3105-main
-          xcodebuild -list -project ThreeOneOSFive.xcodeproj
-
-      - name: Compilar aplicación
-        run: |
-          cd source/3105-main
-
-          xcodebuild \
-            -project ThreeOneOSFive.xcodeproj \
-            -scheme ThreeOneOSFive \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
-
-      - name: Encontrar aplicación
-        run: |
-          echo "=== Apps encontradas ==="
-          find source/3105-main/build -name "*.app" -type d
-
-      - name: Crear IPA
-        run: |
-          APP=$(find source/3105-main/build -name "*.app" -type d | head -n 1)
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: No se encontró ningún .app"
-            exit 1
-          fi
-
-          rm -rf Payload
-          mkdir Payload
-          cp -R "$APP" Payload/
-
-          mkdir -p artifacts
-          zip -r artifacts/ThreeOneOSFive.ipa Payload
-
-      - name: Subir IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: ThreeOneOSFive-IPA
-          path: artifacts/ThreeOneOSFive.ipa
+    xcodebuild -list -project "$PROJECT"
