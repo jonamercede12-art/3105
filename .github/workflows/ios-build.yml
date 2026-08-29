@@ -15,22 +15,15 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          echo "Buscando proyecto Xcode..."
-
           PROJECT=$(find . -type d -name "*.xcodeproj" -print -quit)
 
           if [ -z "$PROJECT" ]; then
-            echo "ERROR: No se encontró ningún archivo .xcodeproj"
-            echo "Contenido del repositorio:"
-            find . -maxdepth 5 -type f | head -200
+            echo "ERROR: No se encontró ningún proyecto Xcode"
+            find . -maxdepth 5 -type f
             exit 1
           fi
 
-          echo "Proyecto encontrado:"
-          echo "$PROJECT"
-
-          echo "Mostrando schemes:"
+          echo "Proyecto encontrado: $PROJECT"
           xcodebuild -list -project "$PROJECT"
 
       - name: Compilar aplicación
@@ -48,7 +41,7 @@ jobs:
             exit 1
           fi
 
-          echo "Scheme encontrado: $SCHEME"
+          echo "Scheme: $SCHEME"
 
           xcodebuild \
             -project "$PROJECT" \
@@ -60,7 +53,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Encontrar aplicación
+      - name: Crear IPA
         shell: bash
         run: |
           set -e
@@ -68,25 +61,13 @@ jobs:
           APP=$(find build -type d -name "*.app" -print -quit)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: No se encontró ninguna aplicación .app"
+            echo "ERROR: No se encontró la aplicación .app"
             exit 1
           fi
 
-          echo "Aplicación encontrada:"
-          echo "$APP"
-
           mkdir -p Payload
           cp -R "$APP" Payload/
-
-      - name: Crear IPA
-        shell: bash
-        run: |
-          set -e
-
           zip -r ThreeOneOSFive.ipa Payload
-
-          echo "IPA creada:"
-          ls -lh ThreeOneOSFive.ipa
 
       - name: Subir IPA
         uses: actions/upload-artifact@v4
