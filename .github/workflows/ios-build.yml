@@ -20,15 +20,46 @@ jobs:
       - name: Unpack iOS project
         run: |
           set -euo pipefail
+
           rm -rf source
-          mkdir source
+          mkdir -p source
+
+          test -f 3105-with-github-actions.zip
+
           unzip -q 3105-with-github-actions.zip -d source
+
+          echo "=== Xcode projects found ==="
+          find source -type d -name "*.xcodeproj" -print
+
+      - name: Find Xcode project
+        run: |
+          set -euo pipefail
+
+          PROJECT="$(find source -type d -name "*.xcodeproj" -print -quit)"
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: No se encontró ningún archivo .xcodeproj"
+            echo "Contenido de source:"
+            find source -maxdepth 5 -print
+            exit 1
+          fi
+
+          echo "Proyecto encontrado:"
+          echo "$PROJECT"
+
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Show project information
+        run: |
+          echo "Usando proyecto: $PROJECT"
+          xcodebuild -list -project "$PROJECT"
 
       - name: Build unsigned app
         run: |
           set -o pipefail
+
           xcodebuild \
-            -project source/ThreeOneOSFive.xcodeproj \
+            -project "$PROJECT" \
             -target 3105 \
             -configuration Release \
             -sdk iphoneos \
@@ -42,11 +73,21 @@ jobs:
       - name: Package unsigned IPA
         run: |
           set -euo pipefail
-          APP_PATH="$(find source/build/Build/Products/Release-iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)"
+
+          APP_PATH="$(find source/build/Build/Products/Release-iphoneos \
+            -maxdepth 1 \
+            -type d \
+            -name '*.app' \
+            -print \
+            -quit)"
+
           test -n "$APP_PATH"
+
           rm -rf Payload
           mkdir Payload
+
           cp -R "$APP_PATH" Payload/
+
           /usr/bin/zip -qry 3105-unsigned.ipa Payload
 
       - name: Upload build artifacts
