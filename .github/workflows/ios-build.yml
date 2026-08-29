@@ -1,4 +1,4 @@
-name: Build iOS
+name: iOS Build
 
 on:
   workflow_dispatch:
@@ -11,13 +11,46 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: Set up job
+
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Show files
+      - name: Show repository files
         run: |
-          echo "Contenido del repositorio:"
-          find . -maxdepth 5 -type f | sort
+          echo "=== ARCHIVOS DEL REPOSITORIO ==="
+          find . -not -path './.git/*' -type f | sort
+
+      - name: Find source ZIP
+        id: find_zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP=$(find . -maxdepth 2 -type f -name "*.zip" \
+            ! -name "*.ipa" \
+            | head -n 1 || true)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No se encontró ningún ZIP."
+            exit 1
+          fi
+
+          echo "ZIP encontrado:"
+          echo "$ZIP"
+
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Extract source ZIP
+        run: |
+          set -euo pipefail
+
+          rm -rf source
+          mkdir -p source
+
+          unzip -q "${{ steps.find_zip.outputs.zip }}" -d source
+
+          echo "=== CONTENIDO DEL ZIP ==="
+          find source -type f | sort
 
       - name: Find IPA
         id: find_ipa
@@ -25,16 +58,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          IPA=$(find . -type f -name "*.ipa" | head -n 1 || true)
+          IPA=$(find source -type f -name "*.ipa" | head -n 1 || true)
 
           if [ -z "$IPA" ]; then
-            echo "ERROR: No se encontró ningún archivo .ipa"
-            echo "Archivos encontrados:"
-            find . -type f | sort
+            echo ""
+            echo "========================================"
+            echo "ERROR: No se encontró ningún archivo IPA"
+            echo "========================================"
+            echo ""
+            echo "Contenido encontrado:"
+            find source -type f | sort
             exit 1
           fi
 
-          echo "IPA encontrado: $IPA"
+          echo ""
+          echo "IPA encontrado:"
+          echo "$IPA"
+          echo ""
+
           echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
 
       - name: Verify IPA
@@ -43,16 +84,19 @@ jobs:
 
           IPA="${{ steps.find_ipa.outputs.ipa }}"
 
-          echo "Verificando IPA:"
-          echo "$IPA"
+          echo "=== INFORMACIÓN DEL IPA ==="
+          ls -lh "$IPA"
 
-          unzip -l "$IPA" | head -50
+          echo ""
+          echo "=== CONTENIDO DEL IPA ==="
+          unzip -l "$IPA" | head -100
 
           if ! unzip -l "$IPA" | grep -q "Payload/"; then
             echo "ERROR: El IPA no contiene Payload/"
             exit 1
           fi
 
+          echo ""
           echo "IPA válido."
 
       - name: Extract IPA
@@ -60,18 +104,24 @@ jobs:
           set -euo pipefail
 
           rm -rf extracted
-          mkdir extracted
+          mkdir -p extracted
 
           unzip -q "${{ steps.find_ipa.outputs.ipa }}" -d extracted
 
-          echo "Contenido extraído:"
-          find extracted -maxdepth 4 -type f | sort
+          echo "=== APLICACIÓN ==="
+          find extracted/Payload -maxdepth 2 -type f | head -100
 
-      - name: Check application
+      - name: Find iOS App
+        id: find_app
+        shell: bash
         run: |
           set -euo pipefail
 
-          APP=$(find extracted/Payload -maxdepth 1 -type d -name "*.app" | head -n 1 || true)
+          APP=$(find extracted/Payload \
+            -maxdepth 1 \
+            -type d \
+            -name "*.app" \
+            | head -n 1 || true)
 
           if [ -z "$APP" ]; then
             echo "ERROR: No se encontró ninguna aplicación .app"
@@ -81,45 +131,77 @@ jobs:
           echo "Aplicación encontrada:"
           echo "$APP"
 
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+
+      - name: Check Info.plist
+        run: |
+          set -euo pipefail
+
+          APP="${{ steps.find_app.outputs.app }}"
+
           if [ ! -f "$APP/Info.plist" ]; then
-            echo "ERROR: La aplicación no contiene Info.plist"
+            echo "ERROR: No existe Info.plist"
             exit 1
           fi
 
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" || true
-          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP/Info.plist" || true
+          echo "=== BUNDLE ID ==="
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
+            "$APP/Info.plist" || true
 
-      - name: Check license configuration
+          echo ""
+          echo "=== APP NAME ==="
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleDisplayName" \
+            "$APP/Info.plist" || true
+
+      - name: Check License Configuration
         run: |
           set -euo pipefail
 
-          APP=$(find extracted/Payload -maxdepth 1 -type d -name "*.app" | head -n 1)
+          APP="${{ steps.find_app.outputs.app }}"
 
-          echo "Comprobando configuración de licencia..."
+          echo "=== CONFIGURACIÓN DE LICENCIA ==="
 
-          if /usr/libexec/PlistBuddy -c "Print :LicenseAPIBaseURL" "$APP/Info.plist" >/tmp/license_url 2>/dev/null; then
-            echo "LicenseAPIBaseURL:"
-            cat /tmp/license_url
+          if /usr/libexec/PlistBuddy \
+            -c "Print :LicenseAPIBaseURL" \
+            "$APP/Info.plist" 2>/dev/null; then
+
+            echo ""
+            echo "LicenseAPIBaseURL configurada correctamente."
+
           else
+
+            echo ""
             echo "AVISO: LicenseAPIBaseURL no está presente."
+
           fi
 
-          if /usr/libexec/PlistBuddy -c "Print :LicenseAPIAnonKey" "$APP/Info.plist" >/tmp/license_key 2>/dev/null; then
+          if /usr/libexec/PlistBuddy \
+            -c "Print :LicenseAPIAnonKey" \
+            "$APP/Info.plist" 2>/dev/null; then
+
+            echo ""
             echo "LicenseAPIAnonKey configurada."
+
           else
+
+            echo ""
             echo "AVISO: LicenseAPIAnonKey no está presente."
+
           fi
 
-      - name: Package IPA
+      - name: Prepare artifact
         run: |
           set -euo pipefail
 
+          rm -rf output
           mkdir -p output
 
           cp "${{ steps.find_ipa.outputs.ipa }}" \
-             "output/3105-unsigned.ipa"
+            output/3105-unsigned.ipa
 
-          echo "IPA preparado:"
+          echo "=== ARTIFACT ==="
           ls -lh output/3105-unsigned.ipa
 
       - name: Upload IPA
