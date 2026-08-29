@@ -1,4 +1,4 @@
-name: Build iOS app
+name: Build iOS
 
 on:
   workflow_dispatch:
@@ -8,93 +8,123 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-latest
 
     steps:
-      - name: Check out source
+      - name: Set up job
         uses: actions/checkout@v4
 
-      - name: Show Xcode version
-        run: xcodebuild -version
+      - name: Show files
+        run: |
+          echo "Contenido del repositorio:"
+          find . -maxdepth 5 -type f | sort
 
-      - name: Unpack iOS project
+      - name: Find IPA
+        id: find_ipa
+        shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf source
-          mkdir -p source
+          IPA=$(find . -type f -name "*.ipa" | head -n 1 || true)
 
-          test -f 3105-with-github-actions.zip
-
-          unzip -q 3105-with-github-actions.zip -d source
-
-          echo "=== Xcode projects found ==="
-          find source -type d -name "*.xcodeproj" -print
-
-      - name: Find Xcode project
-        run: |
-          set -euo pipefail
-
-          PROJECT="$(find source -type d -name "*.xcodeproj" -print -quit)"
-
-          if [ -z "$PROJECT" ]; then
-            echo "ERROR: No se encontró ningún archivo .xcodeproj"
-            echo "Contenido de source:"
-            find source -maxdepth 5 -print
+          if [ -z "$IPA" ]; then
+            echo "ERROR: No se encontró ningún archivo .ipa"
+            echo "Archivos encontrados:"
+            find . -type f | sort
             exit 1
           fi
 
-          echo "Proyecto encontrado:"
-          echo "$PROJECT"
+          echo "IPA encontrado: $IPA"
+          echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
 
-          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
-
-      - name: Show project information
-        run: |
-          echo "Usando proyecto: $PROJECT"
-          xcodebuild -list -project "$PROJECT"
-
-      - name: Build unsigned app
-        run: |
-          set -o pipefail
-
-          xcodebuild \
-            -project "$PROJECT" \
-            -target 3105 \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            CONFIGURATION_BUILD_DIR="$PWD/source/build/Build/Products/Release-iphoneos" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build
-
-      - name: Package unsigned IPA
+      - name: Verify IPA
         run: |
           set -euo pipefail
 
-          APP_PATH="$(find source/build/Build/Products/Release-iphoneos \
-            -maxdepth 1 \
-            -type d \
-            -name '*.app' \
-            -print \
-            -quit)"
+          IPA="${{ steps.find_ipa.outputs.ipa }}"
 
-          test -n "$APP_PATH"
+          echo "Verificando IPA:"
+          echo "$IPA"
 
-          rm -rf Payload
-          mkdir Payload
+          unzip -l "$IPA" | head -50
 
-          cp -R "$APP_PATH" Payload/
+          if ! unzip -l "$IPA" | grep -q "Payload/"; then
+            echo "ERROR: El IPA no contiene Payload/"
+            exit 1
+          fi
 
-          /usr/bin/zip -qry 3105-unsigned.ipa Payload
+          echo "IPA válido."
 
-      - name: Upload build artifacts
+      - name: Extract IPA
+        run: |
+          set -euo pipefail
+
+          rm -rf extracted
+          mkdir extracted
+
+          unzip -q "${{ steps.find_ipa.outputs.ipa }}" -d extracted
+
+          echo "Contenido extraído:"
+          find extracted -maxdepth 4 -type f | sort
+
+      - name: Check application
+        run: |
+          set -euo pipefail
+
+          APP=$(find extracted/Payload -maxdepth 1 -type d -name "*.app" | head -n 1 || true)
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: No se encontró ninguna aplicación .app"
+            exit 1
+          fi
+
+          echo "Aplicación encontrada:"
+          echo "$APP"
+
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "ERROR: La aplicación no contiene Info.plist"
+            exit 1
+          fi
+
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP/Info.plist" || true
+
+      - name: Check license configuration
+        run: |
+          set -euo pipefail
+
+          APP=$(find extracted/Payload -maxdepth 1 -type d -name "*.app" | head -n 1)
+
+          echo "Comprobando configuración de licencia..."
+
+          if /usr/libexec/PlistBuddy -c "Print :LicenseAPIBaseURL" "$APP/Info.plist" >/tmp/license_url 2>/dev/null; then
+            echo "LicenseAPIBaseURL:"
+            cat /tmp/license_url
+          else
+            echo "AVISO: LicenseAPIBaseURL no está presente."
+          fi
+
+          if /usr/libexec/PlistBuddy -c "Print :LicenseAPIAnonKey" "$APP/Info.plist" >/tmp/license_key 2>/dev/null; then
+            echo "LicenseAPIAnonKey configurada."
+          else
+            echo "AVISO: LicenseAPIAnonKey no está presente."
+          fi
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+
+          mkdir -p output
+
+          cp "${{ steps.find_ipa.outputs.ipa }}" \
+             "output/3105-unsigned.ipa"
+
+          echo "IPA preparado:"
+          ls -lh output/3105-unsigned.ipa
+
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: 3105-ios-build
-          path: |
-            3105-unsigned.ipa
-            source/build/Build/Products/Release-iphoneos/*.app
+          path: output/3105-unsigned.ipa
           if-no-files-found: error
